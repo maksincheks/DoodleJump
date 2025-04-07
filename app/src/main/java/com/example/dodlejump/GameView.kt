@@ -18,6 +18,11 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     private var gameThread: Thread? = null
     private var isRunning = false
     private var isGameOver = false
+    private var isPaused = false
+    private var pauseStartTime = 0L
+    private var resumeCountdown = 0
+    private var pausedBackground: Bitmap? = null
+    private lateinit var pauseButtonRect: RectF
 
     // Graphics
     private val paint = Paint().apply { isAntiAlias = true }
@@ -42,21 +47,21 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     // Player
     private var playerX = 0f
     private var playerY = 0f
-    private val playerWidth = 90f
-    private val playerHeight = 110f
+    private val playerWidth = 150f
+    private val playerHeight = 190f
     private var playerVelocityY = 0f
     private var playerVelocityX = 0f
     private var gravity = 0.5f
     private val baseGravity = 0.5f
-    private val jumpForce = -18f
+    private val jumpForce = -22f
     private val moveAcceleration = 0.2f
     private val maxMoveSpeed = 12f
     private val friction = 0.9f
 
     // Platforms
     private val platforms = mutableListOf<Platform>()
-    private val platformWidth = 120f
-    private val platformHeight = 30f
+    private val platformWidth = 170f
+    private val platformHeight = 43f
     private var minPlatformDistance = 100f
     private var maxPlatformDistance = 200f
     private var specialPlatformChance = 0.1f
@@ -119,6 +124,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         playerVelocityX = 0f
         score = 0
         isGameOver = false
+        isPaused = false
         cameraY = 0f
         platforms.clear()
         lastPlatformId = -1
@@ -126,6 +132,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         nextDifficultyIncrease = difficultyIncreaseInterval
         gravity = baseGravity
         canJumpAgain = true
+        pausedBackground = null
 
         var currentY = height.toFloat()
         repeat(15) {
@@ -190,7 +197,7 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         while (isRunning) {
             if (!holder.surface.isValid) continue
 
-            if (!isGameOver) {
+            if (!isGameOver && !isPaused) {
                 update()
             }
             draw()
@@ -204,6 +211,8 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
     }
 
     private fun update() {
+        if (isPaused) return
+
         playerVelocityX *= friction
         playerX += playerVelocityX
         playerY += playerVelocityY
@@ -292,33 +301,73 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         val canvas = holder.lockCanvas() ?: return
 
         try {
-            canvas.drawBitmap(backgroundBitmap, null, backgroundRect, paint)
+            if (isPaused && pausedBackground != null) {
+                canvas.drawBitmap(pausedBackground!!, 0f, 0f, paint)
+            } else {
+                canvas.drawBitmap(backgroundBitmap, null, backgroundRect, paint)
 
-            canvas.save()
-            canvas.translate(0f, -cameraY)
+                if (isPaused && pausedBackground == null) {
+                    pausedBackground = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    val tempCanvas = Canvas(pausedBackground!!)
+                    tempCanvas.drawBitmap(backgroundBitmap, null, backgroundRect, paint)
 
-            for (platform in platforms) {
-                if (platform.y > cameraY - platformHeight && platform.y < cameraY + height + platformHeight) {
-                    canvas.drawBitmap(platformBitmap, platform.x, platform.y, paint)
-
-                    if (platform.isSpecial) {
-                        val highlightRect = RectF(
-                            platform.x - 5,
-                            platform.y - 5,
-                            platform.x + platform.width + 5,
-                            platform.y + platform.height + 5
-                        )
-                        canvas.drawRoundRect(highlightRect, 10f, 10f, platformHighlightPaint)
+                    tempCanvas.save()
+                    tempCanvas.translate(0f, -cameraY)
+                    for (platform in platforms) {
+                        if (platform.y > cameraY - platformHeight && platform.y < cameraY + height + platformHeight) {
+                            tempCanvas.drawBitmap(platformBitmap, platform.x, platform.y, paint)
+                            if (platform.isSpecial) {
+                                val highlightRect = RectF(
+                                    platform.x - 5,
+                                    platform.y - 5,
+                                    platform.x + platform.width + 5,
+                                    platform.y + platform.height + 5
+                                )
+                                tempCanvas.drawRoundRect(highlightRect, 10f, 10f, platformHighlightPaint)
+                            }
+                        }
                     }
+                    tempCanvas.drawBitmap(playerBitmap, playerX, playerY, paint)
+                    tempCanvas.restore()
                 }
             }
 
-            canvas.drawBitmap(playerBitmap, playerX, playerY, paint)
-            canvas.restore()
+            if (!isPaused) {
+                canvas.save()
+                canvas.translate(0f, -cameraY)
 
+                for (platform in platforms) {
+                    if (platform.y > cameraY - platformHeight && platform.y < cameraY + height + platformHeight) {
+                        canvas.drawBitmap(platformBitmap, platform.x, platform.y, paint)
+
+                        if (platform.isSpecial) {
+                            val highlightRect = RectF(
+                                platform.x - 5,
+                                platform.y - 5,
+                                platform.x + platform.width + 5,
+                                platform.y + platform.height + 5
+                            )
+                            canvas.drawRoundRect(highlightRect, 10f, 10f, platformHighlightPaint)
+                        }
+                    }
+                }
+
+                canvas.drawBitmap(playerBitmap, playerX, playerY, paint)
+                canvas.restore()
+            }
+
+            // Кнопка паузы (увеличенный размер)
+            pauseButtonRect = RectF(30f, 30f, 150f, 150f)
+            paint.color = Color.argb(150, 100, 100, 100)
+            canvas.drawRoundRect(pauseButtonRect, 20f, 20f, paint)
+            paint.color = Color.WHITE
+            paint.textSize = 80f
+            canvas.drawText("II", pauseButtonRect.left + 45f, pauseButtonRect.top + 100f, paint)
+
+            // Счёт под кнопкой паузы
             paint.color = Color.BLACK
-            paint.textSize = 60f
-            canvas.drawText("Счёт: $score", 30f, 80f, paint)
+            paint.textSize = 50f
+            canvas.drawText("Очки: $score", 30f, 200f, paint)
 
             if (isGameOver) {
                 paint.color = Color.RED
@@ -330,6 +379,71 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
         } finally {
             holder.unlockCanvasAndPost(canvas)
         }
+    }
+
+    private fun showPauseMenu() {
+        (context as MainActivity).runOnUiThread {
+            val layout = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(50, 50, 50, 50)
+                setBackgroundColor(Color.argb(220, 40, 40, 40))
+
+                val title = TextView(context).apply {
+                    text = "ПАУЗА"
+                    setTextColor(Color.YELLOW)
+                    textSize = 28f
+                    gravity = android.view.Gravity.CENTER
+                    setPadding(0, 0, 0, 30)
+                }
+                addView(title)
+
+                val scoreText = TextView(context).apply {
+                    text = "Ваш счет: $score"
+                    setTextColor(Color.WHITE)
+                    textSize = 24f
+                    gravity = android.view.Gravity.CENTER
+                }
+                addView(scoreText)
+            }
+
+            AlertDialog.Builder(context)
+                .setView(layout)
+                .setPositiveButton("Вернуться") { _, _ ->
+                    resumeAfterDelay()
+                }
+                .setNegativeButton("В меню") { _, _ ->
+                    (context as MainActivity).finish()
+                }
+                .setCancelable(false)
+                .create()
+                .also { dialog ->
+                    dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+                    dialog.show()
+
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.argb(100, 0, 150, 0))
+                    }
+                    dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.apply {
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.argb(100, 150, 0, 0))
+                    }
+                }
+        }
+    }
+
+    private fun resumeAfterDelay() {
+        isPaused = true
+        pauseStartTime = System.currentTimeMillis()
+
+        // Просто 2-секундная задержка без обратного отсчёта
+        postDelayed({
+            isPaused = false
+            pausedBackground = null
+            if (isMusicPrepared) {
+                backgroundMusic.start()
+            }
+        }, 2000)
     }
 
     private fun showGameOver() {
@@ -388,17 +502,31 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
 
     private var lastTouchX = 0f
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (isGameOver) return false
+
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
+                if (pauseButtonRect.contains(event.x, event.y)) {
+                    if (!isPaused) {
+                        isPaused = true
+                        if (isMusicPrepared) {
+                            backgroundMusic.pause()
+                        }
+                        showPauseMenu()
+                    }
+                    return true
+                }
                 lastTouchX = event.x
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                val dx = event.x - lastTouchX
-                playerVelocityX += dx * moveAcceleration
-                playerVelocityX = playerVelocityX.coerceIn(-maxMoveSpeed, maxMoveSpeed)
-                lastTouchX = event.x
-                return true
+                if (!isPaused) {
+                    val dx = event.x - lastTouchX
+                    playerVelocityX += dx * moveAcceleration
+                    playerVelocityX = playerVelocityX.coerceIn(-maxMoveSpeed, maxMoveSpeed)
+                    lastTouchX = event.x
+                    return true
+                }
             }
         }
         return super.onTouchEvent(event)
